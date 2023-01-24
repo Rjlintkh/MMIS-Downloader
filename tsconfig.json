@@ -1,0 +1,9 @@
+{
+    "compilerOptions": {
+        "module": "commonjs",
+        "target": "ESNext",
+        "noImplicitAny": true,
+        "removeComments": true,
+        "sourceMap": false
+    }
+}
