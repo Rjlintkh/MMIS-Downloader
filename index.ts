@@ -1,19 +1,31 @@
-import * as readline from "node:readline/promises";
+import * as readline from "readline/promises";
 import * as fs from "fs";
 import * as url from "url";
 import * as path from "path";
-import { stdin, stdout } from "node:process";
+import { stdin, stdout } from "process";
 import puppeteer from "puppeteer";
 
 declare const CURRENT_VOL: number;
-declare const EBOOK: { title: string, volumes: { pages: { id: string, pageNo: string }[] }[] };
+declare const SERVER_URL: string;
+declare const ITEM_CODE: string;
+declare const ENCTOKEN: string;
+declare const EBOOK: {
+    canDownload: string
+    canPrint: string
+    height: string
+    id: string
+    title: string
+    toc: unknown[]
+    type: "book"
+    volumes: {
+        pages: { id: string, pageNo: string }[] 
+    }[]
+    width: string
+};
 declare const EBookUtils: {
     formatUrlToString: (url: string) => string;
     generatePageUrl: (serverUrl: string, itemId: string, itemType: string, dsRef: string, encToken: string) => string;
 };
-declare const SERVER_URL: string;
-declare const ITEM_CODE: string;
-declare const ENCTOKEN: string;
 
 type PageInfo = { no: number, url: string };
 
@@ -24,7 +36,12 @@ type PageInfo = { no: number, url: string };
     const rl = readline.createInterface({ input: stdin, output: stdout });
     const coverUrl = await rl.question("Enter the URL for Cover Page of an E-BOOK: ");
 
-    const browser = await puppeteer.launch({headless: true});
+    const browser = await puppeteer.launch({
+        headless: true,
+        args: [
+          "--incognito",
+        ]
+    });
     const [page] = await browser.pages();
 
     await page.setViewport({ width: 1366, height: 768});
@@ -82,7 +99,8 @@ type PageInfo = { no: number, url: string };
     console.log(`Bib ID: ${bibId}`)
     console.log(`Pages: ${allPageInfo.length}`);
     console.log("All page URLs are fetched.");
-    const confirmDownload = await rl.question("Download the images? (y/n): ");
+    
+    const confirmDownload = await rl.question("Download the images? (Y/N): ");
     if (confirmDownload !== "y" && confirmDownload !== "Y") {
         console.log("Aborted.");
         return;
@@ -95,52 +113,77 @@ type PageInfo = { no: number, url: string };
     }
 
     let downloadCount = 0;
+    let skipCount = 0;
     for (const info of allPageInfo) {
+        const filename = `${bibId}_${info.no}.jpg`;
+        const filepath = path.join("img", filename);
+
+        if (fs.existsSync(filepath)) {
+            console.log(`${filename} already exists, skipping...`);
+            skipCount++;
+            continue;
+        }
+
         const response = await fetch(info.url);
         const buffer = await response.arrayBuffer();
-
-        const filename = `${bibId}_${info.no}.jpg`;
-        const filepath = path.join("img", filename);
         fs.writeFileSync(filepath, Buffer.from(buffer));
-
+        console.log(`${filename} downloaded.`);
         downloadCount++;
     }
-    console.log(`${downloadCount} images downloaded.`)
 
-    const confirmBundle = await rl.question("Bundle the images into a pdf? (y/n): ");
-    if (confirmBundle !== "y" && confirmBundle !== "Y") {
-        console.log("Aborted.");
-        return;
+    if (skipCount) {
+        console.log(`${downloadCount} images downloaded; ${skipCount} images skipped.`);
     } else {
-        console.log("Bundling...");
+        console.log(`${downloadCount} images downloaded.`);
     }
 
-    if (!fs.existsSync("pdf")){
-        fs.mkdirSync("pdf");
+    Bundle: {
+        const confirmBundle = await rl.question("Bundle the images into a pdf? (Y/N): ");
+        if (confirmBundle !== "y" && confirmBundle !== "Y") {
+            console.log("Aborted.");
+            return;
+        } else {
+            console.log("Bundling...");
+        }
+    
+        if (!fs.existsSync("pdf")){
+            fs.mkdirSync("pdf");
+        }
+    
+        const pdf = new (require("pdfkit"))({
+            autoFirstPage: false
+        });
+        const pdfPath = path.join("pdf", `${bibId}.pdf`);
+        if (fs.existsSync(pdfPath)) {
+            const confirmReplace = await rl.question("Pdf already exists, replace it? (Y/N): ");
+            if (confirmReplace !== "y" && confirmReplace !== "Y") {
+                console.log("Pdf bundling skipped.");
+                break Bundle;
+            } else {
+                console.log("Replacing...");
+                fs.unlinkSync(pdfPath);
+            }
+        }
+        pdf.pipe(fs.createWriteStream(pdfPath))
+    
+        const pageWidth = parseInt(ebook.width);
+        const pageHeight = parseInt(ebook.height);
+    
+        for (const info of allPageInfo) {
+            const filename = `${bibId}_${info.no}.jpg`;
+            const filepath = path.join("img", filename);
+    
+            const img = pdf.openImage(filepath);
+            pdf.addPage({size: [pageWidth, pageHeight]}).image(img, 0, 0, {width: pageWidth, height: pageHeight});
+        }
+        pdf.end();
+        console.log(`Pdf created at ${pdfPath}.`)
     }
 
-    const pdf = new (require("pdfkit"))({
-        autoFirstPage: false
-    });
-    const pdfPath = path.join("pdf", `${bibId}.pdf`);
-    pdf.pipe(fs.createWriteStream(pdfPath))
-    console.log(`Pdf created at ${pdfPath}.`)
-
-    for (const info of allPageInfo) {
-        const filename = `${bibId}_${info.no}.jpg`;
-        const filepath = path.join("img", filename);
-
-        const img = pdf.openImage(filepath);
-        pdf.addPage({size: [img.width, img.height]});
-        pdf.image(img, 0, 0);
-    }
-    pdf.end();
-
-    const confirmDelete = await rl.question("Keep the downloaded images? (y/n): ");
+    const confirmDelete = await rl.question("Keep the downloaded images? (Y/N): ");
     if (confirmDelete === "y" || confirmDelete === "Y") {
         console.log("Done.");
         process.exit(0);
-        return;
     } else {
         console.log("Deleting...");
     }
