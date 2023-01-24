@@ -20,12 +20,20 @@ const puppeteer_1 = require("puppeteer");
     const [page] = await browser.pages();
     await page.setViewport({ width: 1366, height: 768 });
     await page.goto(coverUrl);
-    const viewOnline = await page.waitForSelector("#_coverpage_WAR_mmisportalportlet_btnViewOnline, #_search_WAR_mmisportalportlet_btnViewOnline");
-    console.log("E-BOOK found.");
-    await viewOnline.click();
-    const viewerPortlet = await page.waitForSelector("#viewerPortlet");
-    const viewerUrl = await (await viewerPortlet.getProperty("src")).jsonValue();
-    await page.goto(viewerUrl);
+    await page.waitForSelector("div.coverpage");
+    ViewOnline: {
+        const canvasExists = await page.evaluate(() => !!document.querySelector(".openseadragon-canvas"));
+        if (canvasExists) {
+            console.log("E-BOOK found.");
+            break ViewOnline;
+        }
+        const viewOnline = await page.waitForSelector("#_coverpage_WAR_mmisportalportlet_btnViewOnline, #_search_WAR_mmisportalportlet_btnViewOnline");
+        console.log("E-BOOK found.");
+        await viewOnline.click();
+        const viewerPortlet = await page.waitForSelector("#viewerPortlet");
+        const viewerUrl = await (await viewerPortlet.getProperty("src")).jsonValue();
+        await page.goto(viewerUrl);
+    }
     await page.waitForSelector(".openseadragon-canvas");
     await page.waitForFunction(() => typeof EBOOK === "object");
     const ebook = await page.evaluate(() => EBOOK);
@@ -53,8 +61,8 @@ const puppeteer_1 = require("puppeteer");
     await browser.close();
     function getBibId(allPageInfo) {
         const sample = allPageInfo[0].url;
-        const filename = url.parse(sample, true).query.ref;
-        const paths = filename.split(path.sep);
+        const filename = url.parse(sample, true).query.ref.replace(/\\/g, "/");
+        const paths = filename.split("/");
         return paths[3];
     }
     const bibId = getBibId(allPageInfo);
@@ -64,7 +72,7 @@ const puppeteer_1 = require("puppeteer");
     const confirmDownload = await rl.question("Download the images? (Y/N): ");
     if (confirmDownload !== "y" && confirmDownload !== "Y") {
         console.log("Aborted.");
-        return;
+        process.exit(0);
     }
     else {
         console.log("Downloading...");
@@ -77,17 +85,23 @@ const puppeteer_1 = require("puppeteer");
     for (const info of allPageInfo) {
         const filename = `${bibId}_${info.no}.jpg`;
         const filepath = path.join("img", filename);
+        process.stdout.write(" ");
         if (fs.existsSync(filepath)) {
-            console.log(`${filename} already exists, skipping...`);
+            process.stdout.clearLine(0);
+            process.stdout.cursorTo(0);
+            process.stdout.write(`${filename} already exists, skipping...`);
             skipCount++;
             continue;
         }
         const response = await fetch(info.url);
         const buffer = await response.arrayBuffer();
         fs.writeFileSync(filepath, Buffer.from(buffer));
-        console.log(`${filename} downloaded.`);
+        process.stdout.clearLine(0);
+        process.stdout.cursorTo(0);
+        process.stdout.write(`${filename} downloaded.`);
         downloadCount++;
     }
+    process.stdout.write("\n");
     if (skipCount) {
         console.log(`${downloadCount} images downloaded; ${skipCount} images skipped.`);
     }
@@ -98,7 +112,7 @@ const puppeteer_1 = require("puppeteer");
         const confirmBundle = await rl.question("Bundle the images into a pdf? (Y/N): ");
         if (confirmBundle !== "y" && confirmBundle !== "Y") {
             console.log("Aborted.");
-            return;
+            process.exit(0);
         }
         else {
             console.log("Bundling...");
@@ -131,7 +145,7 @@ const puppeteer_1 = require("puppeteer");
             pdf.addPage({ size: [pageWidth, pageHeight] }).image(img, 0, 0, { width: pageWidth, height: pageHeight });
         }
         pdf.end();
-        console.log(`Pdf created at ${pdfPath}.`);
+        console.log(`Pdf created at ${path.resolve(pdfPath)}.`);
     }
     const confirmDelete = await rl.question("Keep the downloaded images? (Y/N): ");
     if (confirmDelete === "y" || confirmDelete === "Y") {

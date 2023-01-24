@@ -46,15 +46,25 @@ type PageInfo = { no: number, url: string };
 
     await page.setViewport({ width: 1366, height: 768});
     await page.goto(coverUrl);
+    await page.waitForSelector("div.coverpage");
 
-    const viewOnline = await page.waitForSelector("#_coverpage_WAR_mmisportalportlet_btnViewOnline, #_search_WAR_mmisportalportlet_btnViewOnline");
-    console.log("E-BOOK found.")
-    await viewOnline.click();
+    ViewOnline: {
+        const canvasExists = await page.evaluate(() => !!document.querySelector(".openseadragon-canvas"));
 
-    const viewerPortlet = await page.waitForSelector("#viewerPortlet");
-    const viewerUrl = <string> await (await viewerPortlet.getProperty("src")).jsonValue();
+        if (canvasExists) {
+            console.log("E-BOOK found.");
+            break ViewOnline;
+        }
 
-    await page.goto(viewerUrl);
+        const viewOnline = await page.waitForSelector("#_coverpage_WAR_mmisportalportlet_btnViewOnline, #_search_WAR_mmisportalportlet_btnViewOnline");
+        console.log("E-BOOK found.")
+        await viewOnline.click();
+    
+        const viewerPortlet = await page.waitForSelector("#viewerPortlet");
+        const viewerUrl = <string> await (await viewerPortlet.getProperty("src")).jsonValue();
+    
+        await page.goto(viewerUrl);
+    }
 
     await page.waitForSelector(".openseadragon-canvas");
     await page.waitForFunction(() => typeof EBOOK === "object");
@@ -89,8 +99,8 @@ type PageInfo = { no: number, url: string };
 
     function getBibId(allPageInfo: PageInfo[]) {
         const sample = allPageInfo[0].url;
-        const filename = <string>url.parse(sample, true).query.ref;
-        const paths = filename.split(path.sep);
+        const filename = (<string>url.parse(sample, true).query.ref).replace(/\\/g, "/");
+        const paths = filename.split("/");
         return paths[3];
     }
 
@@ -103,7 +113,7 @@ type PageInfo = { no: number, url: string };
     const confirmDownload = await rl.question("Download the images? (Y/N): ");
     if (confirmDownload !== "y" && confirmDownload !== "Y") {
         console.log("Aborted.");
-        return;
+        process.exit(0);
     } else {
         console.log("Downloading...");
     }
@@ -118,8 +128,12 @@ type PageInfo = { no: number, url: string };
         const filename = `${bibId}_${info.no}.jpg`;
         const filepath = path.join("img", filename);
 
+        process.stdout.write(" ");
+
         if (fs.existsSync(filepath)) {
-            console.log(`${filename} already exists, skipping...`);
+            process.stdout.clearLine(0);
+            process.stdout.cursorTo(0);
+            process.stdout.write(`${filename} already exists, skipping...`);
             skipCount++;
             continue;
         }
@@ -127,9 +141,12 @@ type PageInfo = { no: number, url: string };
         const response = await fetch(info.url);
         const buffer = await response.arrayBuffer();
         fs.writeFileSync(filepath, Buffer.from(buffer));
-        console.log(`${filename} downloaded.`);
+        process.stdout.clearLine(0);
+        process.stdout.cursorTo(0);
+        process.stdout.write(`${filename} downloaded.`);
         downloadCount++;
     }
+    process.stdout.write("\n");
 
     if (skipCount) {
         console.log(`${downloadCount} images downloaded; ${skipCount} images skipped.`);
@@ -141,7 +158,7 @@ type PageInfo = { no: number, url: string };
         const confirmBundle = await rl.question("Bundle the images into a pdf? (Y/N): ");
         if (confirmBundle !== "y" && confirmBundle !== "Y") {
             console.log("Aborted.");
-            return;
+            process.exit(0);
         } else {
             console.log("Bundling...");
         }
@@ -177,7 +194,7 @@ type PageInfo = { no: number, url: string };
             pdf.addPage({size: [pageWidth, pageHeight]}).image(img, 0, 0, {width: pageWidth, height: pageHeight});
         }
         pdf.end();
-        console.log(`Pdf created at ${pdfPath}.`)
+        console.log(`Pdf created at ${path.resolve(pdfPath)}.`)
     }
 
     const confirmDelete = await rl.question("Keep the downloaded images? (Y/N): ");
